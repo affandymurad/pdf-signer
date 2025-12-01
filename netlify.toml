@@ -18,6 +18,8 @@
 # Environment variables (opsional, bisa diset di Netlify dashboard)
 # [build.environment]
 #   NODE_VERSION = "18"
+[build.environment]
+  NODE_VERSION = "16"
 
 # Headers untuk security
 [[headers]]
