@@ -1,0 +1,28 @@
+# Netlify Configuration
+[build]
+  # Direktori tempat hasil build frontend
+  publish = "frontend/build"
+  
+  # Command untuk build aplikasi
+  command = "cd frontend && npm install && npm run build"
+  
+  # Direktori functions
+  functions = "netlify/functions"
+
+# Pengaturan redirect untuk SPA
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Environment variables (opsional, bisa diset di Netlify dashboard)
+# [build.environment]
+#   NODE_VERSION = "18"
+
+# Headers untuk security
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
