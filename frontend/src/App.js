@@ -322,9 +322,58 @@ function App() {
     return null;
   };
 
-  // Tambahkan fungsi handleDragStart setelah handleCanvasClick
+  // ❌ HAPUS atau BIARKAN handleDragStart yang lama
   const handleDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  // ✅ TAMBAH fungsi baru ini
+  const handlePreviewTouchStart = async (e, type) => {
+    e.preventDefault();
+
+    if (!canvasRef.current) return;
+
+    const touch = e.touches[0];
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+
+    // Generate signature image
+    const imageUrl = await generateSignatureImage();
+    if (!imageUrl) return;
+
+    const img = new Image();
+    img.src = imageUrl;
+    img.onload = () => {
+      const maxWidth = 200;
+      const maxHeight = 100;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxWidth) {
+        height = (maxWidth / width) * height;
+        width = maxWidth;
+      }
+      if (height > maxHeight) {
+        width = (maxHeight / height) * width;
+        height = maxHeight;
+      }
+
+      const scaleX = canvasRef.current.width / canvasRect.width;
+      const scaleY = canvasRef.current.height / canvasRect.height;
+
+      // Koordinat relatif ke canvas
+      const x = (touch.clientX - canvasRect.left) * scaleX - (width / 2);
+      const y = (touch.clientY - canvasRect.top) * scaleY - (height / 2);
+
+      // ✅ Langsung create overlay signature
+      setOverlaySignature({
+        content: imageUrl,
+        page: currentPage,
+        x: Math.max(0, Math.min(x, canvasRef.current.width - width)),
+        y: Math.max(0, Math.min(y, canvasRef.current.height - height)),
+        width: width,
+        height: height,
+      });
+    };
   };
 
   const handleCanvasDragOver = (e) => {
@@ -388,6 +437,34 @@ function App() {
     };
   };
 
+  // ✅ TAMBAH fungsi baru ini
+  const handleCanvasTouchMove = async (e) => {
+    // Cek apakah ada overlay signature yang sedang di-drag
+    if (!overlaySignature || !isDragging) return;
+
+    e.preventDefault();
+
+    const touch = e.touches[0];
+    const rect = canvasRef.current.getBoundingClientRect();
+    const canvasWidth = canvasRef.current.width;
+    const canvasHeight = canvasRef.current.height;
+
+    const mouseX = ((touch.clientX - rect.left) / rect.width) * canvasWidth;
+    const mouseY = ((touch.clientY - rect.top) / rect.height) * canvasHeight;
+
+    const newX = mouseX - dragOffset.x;
+    const newY = mouseY - dragOffset.y;
+
+    const maxX = canvasWidth - overlaySignature.width;
+    const maxY = canvasHeight - overlaySignature.height;
+
+    setOverlaySignature((prev) => ({
+      ...prev,
+      x: Math.max(0, Math.min(newX, maxX)),
+      y: Math.max(0, Math.min(newY, maxY))
+    }));
+  };
+
   // Update startDrag - perbaiki untuk overlay
   const startDrag = (e) => {
     if (!overlaySignature) return;
@@ -399,8 +476,12 @@ function App() {
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
-    const mouseX = ((e.clientX - rect.left) / rect.width) * canvasWidth;
-    const mouseY = ((e.clientY - rect.top) / rect.height) * canvasHeight;
+    // ✅ Support touch dan mouse
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const mouseX = ((clientX - rect.left) / rect.width) * canvasWidth;
+    const mouseY = ((clientY - rect.top) / rect.height) * canvasHeight;
 
     setDragOffset({
       x: mouseX - overlaySignature.x,
@@ -425,7 +506,9 @@ function App() {
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
-    const mouseX = ((e.clientX - rect.left) / rect.width) * canvasWidth;
+    // ✅ Support touch dan mouse
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const mouseX = ((clientX - rect.left) / rect.width) * canvasWidth;
 
     const aspectRatio = overlaySignature.width / overlaySignature.height;
     let newWidth = overlaySignature.width;
@@ -489,8 +572,12 @@ function App() {
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
-    const mouseX = ((e.clientX - rect.left) / rect.width) * canvasWidth;
-    const mouseY = ((e.clientY - rect.top) / rect.height) * canvasHeight;
+    // ✅ Support touch dan mouse
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const mouseX = ((clientX - rect.left) / rect.width) * canvasWidth;
+    const mouseY = ((clientY - rect.top) / rect.height) * canvasHeight;
 
     const newX = mouseX - dragOffset.x;
     const newY = mouseY - dragOffset.y;
@@ -508,7 +595,7 @@ function App() {
 
   // Update useEffect untuk drag global
   useEffect(() => {
-    const handleMouseMove = (e) => {
+    const handleMove = (e) => {
       if (isDragging) {
         handleDrag(e);
       } else if (isResizing) {
@@ -516,7 +603,7 @@ function App() {
       }
     };
 
-    const handleMouseUp = () => {
+    const handleEnd = () => {
       if (isDragging) {
         stopDrag();
       } else if (isResizing) {
@@ -525,13 +612,22 @@ function App() {
     };
 
     if (isDragging || isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
+      // Mouse events
+      document.addEventListener('mousemove', handleMove);
+      document.addEventListener('mouseup', handleEnd);
+
+      // ✅ Touch events
+      document.addEventListener('touchmove', handleMove, { passive: false });
+      document.addEventListener('touchend', handleEnd);
+      document.addEventListener('touchcancel', handleEnd);
     }
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleEnd);
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleEnd);
+      document.removeEventListener('touchcancel', handleEnd);
     };
   }, [isDragging, isResizing, handleDrag, handleResize]);
 
@@ -709,6 +805,7 @@ function App() {
                       ref={canvasRef}
                       onDrop={handleCanvasDrop}
                       onDragOver={handleCanvasDragOver}
+                      onTouchMove={handleCanvasTouchMove}
                     />
                     {overlaySignature && overlaySignature.page === currentPage && (
                       <div
@@ -725,6 +822,7 @@ function App() {
                           transform: 'none', // Hapus transform
                         }}
                         onMouseDown={startDrag}
+                        onTouchStart={startDrag}
                       >
                         <img
                           src={overlaySignature.content}
@@ -741,18 +839,22 @@ function App() {
                         <div
                           className="resize-handle resize-se"
                           onMouseDown={(e) => startResize(e, 'se')}
+                          onTouchStart={(e) => startResize(e, 'se')}
                         />
                         <div
                           className="resize-handle resize-sw"
                           onMouseDown={(e) => startResize(e, 'sw')}
+                          onTouchStart={(e) => startResize(e, 'sw')}
                         />
                         <div
                           className="resize-handle resize-ne"
                           onMouseDown={(e) => startResize(e, 'ne')}
+                          onTouchStart={(e) => startResize(e, 'ne')}
                         />
                         <div
                           className="resize-handle resize-nw"
                           onMouseDown={(e) => startResize(e, 'nw')}
+                          onTouchStart={(e) => startResize(e, 'nw')}
                         />
 
                         <button
@@ -970,6 +1072,7 @@ function App() {
                         style={{ fontFamily: visualSignature.font, fontSize: '24px' }}
                         draggable="true"
                         onDragStart={handleDragStart}
+                        onTouchStart={(e) => handlePreviewTouchStart(e, 'text')}
                       >
                         {visualSignature.value}
                       </div>
@@ -1023,6 +1126,7 @@ function App() {
                         }}
                         draggable="true"
                         onDragStart={handleDragStart}
+                        onTouchStart={(e) => handlePreviewTouchStart(e, 'qr')}
                       >
                         <img
                           src={(() => {
@@ -1092,6 +1196,7 @@ function App() {
                           style={{ maxHeight: '80px', border: '1px solid #ddd', cursor: 'grab' }}
                           draggable="true"
                           onDragStart={handleDragStart}
+                          onTouchStart={(e) => handlePreviewTouchStart(e, 'draw')}
                         />
                       </div>
                     )}
@@ -1138,6 +1243,7 @@ function App() {
                           style={{ maxHeight: '60px', cursor: 'grab' }}
                           draggable="true"
                           onDragStart={handleDragStart}
+                          onTouchStart={(e) => handlePreviewTouchStart(e, 'upload')}
                         />
                       </div>
                     )}
