@@ -329,12 +329,18 @@ function App() {
 
   // ✅ TAMBAH fungsi baru ini
   const handlePreviewTouchStart = async (e, type) => {
+    // ✅ iOS: Stop propagation first
     e.preventDefault();
+    e.stopPropagation();
 
     if (!canvasRef.current) return;
 
     const touch = e.touches[0];
     const canvasRect = canvasRef.current.getBoundingClientRect();
+
+    // ✅ iOS: Use pageX/pageY instead of clientX/clientY for better accuracy
+    const touchX = touch.pageX || touch.clientX;
+    const touchY = touch.pageY || touch.clientY;
 
     // Generate signature image
     const imageUrl = await generateSignatureImage();
@@ -360,11 +366,10 @@ function App() {
       const scaleX = canvasRef.current.width / canvasRect.width;
       const scaleY = canvasRef.current.height / canvasRect.height;
 
-      // Koordinat relatif ke canvas
-      const x = (touch.clientX - canvasRect.left) * scaleX - (width / 2);
-      const y = (touch.clientY - canvasRect.top) * scaleY - (height / 2);
+      // ✅ iOS: Use touchX/touchY calculated above
+      const x = (touchX - canvasRect.left) * scaleX - (width / 2);
+      const y = (touchY - canvasRect.top) * scaleY - (height / 2);
 
-      // ✅ Langsung create overlay signature
       setOverlaySignature({
         content: imageUrl,
         page: currentPage,
@@ -439,9 +444,7 @@ function App() {
 
   // ✅ TAMBAH fungsi baru ini
   const handleCanvasTouchMove = async (e) => {
-    // Cek apakah ada overlay signature yang sedang di-drag
     if (!overlaySignature || !isDragging) return;
-
     e.preventDefault();
 
     const touch = e.touches[0];
@@ -449,8 +452,12 @@ function App() {
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
-    const mouseX = ((touch.clientX - rect.left) / rect.width) * canvasWidth;
-    const mouseY = ((touch.clientY - rect.top) / rect.height) * canvasHeight;
+    // ✅ iOS: Use pageX/pageY
+    const touchX = touch.pageX || touch.clientX;
+    const touchY = touch.pageY || touch.clientY;
+
+    const mouseX = ((touchX - rect.left) / rect.width) * canvasWidth;
+    const mouseY = ((touchY - rect.top) / rect.height) * canvasHeight;
 
     const newX = mouseX - dragOffset.x;
     const newY = mouseY - dragOffset.y;
@@ -476,9 +483,15 @@ function App() {
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
-    // ✅ Support touch dan mouse
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    // ✅ iOS: Use pageX/pageY for better accuracy
+    let clientX, clientY;
+    if (e.touches) {
+      clientX = e.touches[0].pageX || e.touches[0].clientX;
+      clientY = e.touches[0].pageY || e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
 
     const mouseX = ((clientX - rect.left) / rect.width) * canvasWidth;
     const mouseY = ((clientY - rect.top) / rect.height) * canvasHeight;
@@ -506,8 +519,13 @@ function App() {
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
-    // ✅ Support touch dan mouse
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    // ✅ iOS: Use pageX for better accuracy
+    let clientX;
+    if (e.touches) {
+      clientX = e.touches[0].pageX || e.touches[0].clientX;
+    } else {
+      clientX = e.clientX;
+    }
     const mouseX = ((clientX - rect.left) / rect.width) * canvasWidth;
 
     const aspectRatio = overlaySignature.width / overlaySignature.height;
@@ -517,21 +535,21 @@ function App() {
     let newY = overlaySignature.y;
 
     switch (resizeHandle) {
-      case 'se': // bottom-right
+      case 'se':
         newWidth = mouseX - overlaySignature.x;
         newHeight = newWidth / aspectRatio;
         break;
-      case 'sw': // bottom-left
+      case 'sw':
         newWidth = overlaySignature.x + overlaySignature.width - mouseX;
         newHeight = newWidth / aspectRatio;
         newX = mouseX;
         break;
-      case 'ne': // top-right
+      case 'ne':
         newWidth = mouseX - overlaySignature.x;
         newHeight = newWidth / aspectRatio;
         newY = overlaySignature.y + overlaySignature.height - newHeight;
         break;
-      case 'nw': // top-left
+      case 'nw':
         newWidth = overlaySignature.x + overlaySignature.width - mouseX;
         newHeight = newWidth / aspectRatio;
         newX = mouseX;
@@ -541,11 +559,8 @@ function App() {
         break;
     }
 
-    // Size constraints
     if (newWidth < 50 || newHeight < 25) return;
     if (newWidth > 400 || newHeight > 200) return;
-
-    // Boundary check
     if (newX < 0 || newY < 0) return;
     if (newX + newWidth > canvasWidth || newY + newHeight > canvasHeight) return;
 
@@ -572,9 +587,15 @@ function App() {
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
 
-    // ✅ Support touch dan mouse
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    // ✅ iOS: Use pageX/pageY for better accuracy
+    let clientX, clientY;
+    if (e.touches) {
+      clientX = e.touches[0].pageX || e.touches[0].clientX;
+      clientY = e.touches[0].pageY || e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
 
     const mouseX = ((clientX - rect.left) / rect.width) * canvasWidth;
     const mouseY = ((clientY - rect.top) / rect.height) * canvasHeight;
@@ -582,7 +603,6 @@ function App() {
     const newX = mouseX - dragOffset.x;
     const newY = mouseY - dragOffset.y;
 
-    // Boundary checking
     const maxX = canvasWidth - overlaySignature.width;
     const maxY = canvasHeight - overlaySignature.height;
 
