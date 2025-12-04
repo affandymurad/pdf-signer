@@ -56,7 +56,7 @@ function App() {
   }, []);
 
 
-  // Ganti useEffect untuk drawing canvas
+  // ✅ TAMBAH useEffect baru dengan touch + mouse support
   useEffect(() => {
     if (drawCanvasRef.current && signatureMode === 'visual' && visualSignature?.type === 'draw') {
       const canvas = drawCanvasRef.current;
@@ -76,10 +76,20 @@ function App() {
       let lastX = 0;
       let lastY = 0;
 
-      const getMousePos = (e) => {
+      // ✅ Fungsi universal untuk mendapatkan posisi (mouse/touch/stylus)
+      const getPosition = (e) => {
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
+
+        // Touch/stylus event
+        if (e.touches && e.touches.length > 0) {
+          return {
+            x: (e.touches[0].clientX - rect.left) * scaleX,
+            y: (e.touches[0].clientY - rect.top) * scaleY
+          };
+        }
+        // Mouse event
         return {
           x: (e.clientX - rect.left) * scaleX,
           y: (e.clientY - rect.top) * scaleY
@@ -87,8 +97,9 @@ function App() {
       };
 
       const start = (e) => {
+        e.preventDefault(); // ✅ Prevent scrolling on touch
         isDrawing = true;
-        const pos = getMousePos(e);
+        const pos = getPosition(e);
         lastX = pos.x;
         lastY = pos.y;
         ctx.beginPath();
@@ -97,34 +108,49 @@ function App() {
 
       const draw = (e) => {
         if (!isDrawing) return;
-        e.preventDefault();
-        const pos = getMousePos(e);
+        e.preventDefault(); // ✅ Prevent scrolling while drawing
+        const pos = getPosition(e);
         ctx.lineTo(pos.x, pos.y);
         ctx.stroke();
         lastX = pos.x;
         lastY = pos.y;
       };
 
-      const stop = () => {
+      const stop = (e) => {
         if (isDrawing) {
+          e.preventDefault();
           ctx.closePath();
           isDrawing = false;
         }
       };
 
+      // ✅ Mouse events
       canvas.addEventListener('mousedown', start);
       canvas.addEventListener('mousemove', draw);
       canvas.addEventListener('mouseup', stop);
       canvas.addEventListener('mouseleave', stop);
 
+      // ✅ Touch events (untuk finger)
+      canvas.addEventListener('touchstart', start, { passive: false });
+      canvas.addEventListener('touchmove', draw, { passive: false });
+      canvas.addEventListener('touchend', stop, { passive: false });
+      canvas.addEventListener('touchcancel', stop, { passive: false });
+
       return () => {
+        // Cleanup mouse
         canvas.removeEventListener('mousedown', start);
         canvas.removeEventListener('mousemove', draw);
         canvas.removeEventListener('mouseup', stop);
         canvas.removeEventListener('mouseleave', stop);
+
+        // Cleanup touch
+        canvas.removeEventListener('touchstart', start);
+        canvas.removeEventListener('touchmove', draw);
+        canvas.removeEventListener('touchend', stop);
+        canvas.removeEventListener('touchcancel', stop);
       };
     }
-  }, [signatureMode, visualSignature?.type]); // Re-init saat mode atau type berubah
+  }, [signatureMode, visualSignature?.type]);
 
   // === Render PDF page ===
   const renderPage = async (pageNum) => {

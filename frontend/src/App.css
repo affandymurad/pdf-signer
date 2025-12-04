@@ -512,6 +512,7 @@ body {
   background: white;
   width: 100%;
   max-width: 400px;
+  touch-action: none;
 }
 
 .draw-canvas-buttons {
