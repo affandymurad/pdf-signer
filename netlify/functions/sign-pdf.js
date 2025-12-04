@@ -1,4 +1,3 @@
-// netlify/functions/sign-pdf.js
 const multipart = require('parse-multipart-data');
 const forge = require('node-forge');
 const signer = require('node-signpdf').default;
@@ -21,7 +20,59 @@ function parseP12Certificate(p12Buffer, password = '') {
     }
 }
 
-exports.handler = async (event, context) => {
+async function embedVisualSignature(pdfDoc, overlay) {
+    try {
+        const page = pdfDoc.getPages()[overlay.page - 1];
+        if (!page) {
+            console.warn('⚠️ Page not found:', overlay.page);
+            return;
+        }
+
+        let imageBytes;
+        let imageType = 'png';
+
+        if (overlay.content.startsWith('data:image/png')) {
+            const base64 = overlay.content.split(',')[1];
+            imageBytes = Buffer.from(base64, 'base64');
+            imageType = 'png';
+        } else if (overlay.content.startsWith('data:image/jpeg') || overlay.content.startsWith('data:image/jpg')) {
+            const base64 = overlay.content.split(',')[1];
+            imageBytes = Buffer.from(base64, 'base64');
+            imageType = 'jpeg';
+        } else {
+            console.warn('⚠️ Unsupported image format');
+            return;
+        }
+
+        let image;
+        if (imageType === 'png') {
+            image = await pdfDoc.embedPng(imageBytes);
+        } else if (imageType === 'jpeg') {
+            image = await pdfDoc.embedJpg(imageBytes);
+        }
+
+        // const pageWidth = page.getWidth();
+        const pageHeight = page.getHeight();
+        const scale = 1.3;
+
+        const xPdf = overlay.x / scale;
+        const yPdf = pageHeight - (overlay.y / scale) - (overlay.height / scale);
+
+        page.drawImage(image, {
+            x: xPdf,
+            y: yPdf,
+            width: overlay.width / scale,
+            height: overlay.height / scale,
+        });
+
+        console.log('✅ Visual signature embedded');
+    } catch (err) {
+        console.error('❌ Failed to embed visual signature:', err.message);
+        throw err;
+    }
+}
+
+exports.handler = async (event) => {
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
@@ -43,7 +94,6 @@ exports.handler = async (event, context) => {
     try {
         const contentType = event.headers['content-type'] || event.headers['Content-Type'];
         const boundary = contentType.split('boundary=')[1];
-
         const bodyBuffer = Buffer.from(event.body, event.isBase64Encoded ? 'base64' : 'utf8');
         const parts = multipart.parse(bodyBuffer, boundary);
 
@@ -52,6 +102,7 @@ exports.handler = async (event, context) => {
         const passwordPart = parts.find(part => part.name === 'password');
         const reasonPart = parts.find(part => part.name === 'reason');
         const locationPart = parts.find(part => part.name === 'location');
+        const overlayPart = parts.find(part => part.name === 'signatureOverlay');
 
         if (!pdfPart || !certPart) {
             return {
@@ -74,20 +125,29 @@ exports.handler = async (event, context) => {
             throw new Error('Invalid certificate or password: ' + certInfo.error);
         }
 
-        // Flatten PDF
+        // Load & process PDF
         let flattenedPdfBuffer;
         try {
             const pdfDoc = await PDFDocument.load(originalPdfBuffer, {
                 ignoreEncryption: true,
                 allowInvalidSignatures: true,
             });
+
+            // Embed visual signature if provided
+            if (overlayPart) {
+                const overlay = JSON.parse(overlayPart.data.toString());
+                console.log('📝 Embedding visual signature');
+                await embedVisualSignature(pdfDoc, overlay);
+            }
+
             const uint8Array = await pdfDoc.save({
                 useObjectStreams: false,
                 addDefaultPage: false,
             });
             flattenedPdfBuffer = Buffer.from(uint8Array);
+            console.log('✅ PDF processed');
         } catch (err) {
-            console.warn('⚠️ PDF flattening failed. Using original PDF as fallback.');
+            console.warn('⚠️ PDF processing failed:', err.message);
             flattenedPdfBuffer = originalPdfBuffer;
         }
 
@@ -105,7 +165,7 @@ exports.handler = async (event, context) => {
             asn1Strict: false
         });
 
-        // Return signed PDF as base64
+        // Return signed PDF
         return {
             statusCode: 200,
             headers: {
@@ -118,7 +178,7 @@ exports.handler = async (event, context) => {
         };
 
     } catch (error) {
-        console.error('Signing error:', error);
+        console.error('❌ Signing error:', error);
         return {
             statusCode: 500,
             headers,

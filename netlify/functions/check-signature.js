@@ -1,4 +1,3 @@
-// netlify/functions/check-signature.js
 const multipart = require('parse-multipart-data');
 const zlib = require('zlib');
 
@@ -10,17 +9,14 @@ function checkPdfSignature(pdfBuffer) {
     let hasLTV = false;
 
     try {
-        // 1. Cek /DSS di root level
         if (/\/DSS\s+\d+\s+0\s+R/i.test(pdfText)) {
             hasLTV = true;
         }
 
-        // 2. Cek /Type /DSS di object definition
         if (!hasLTV && /\/Type\s*\/DSS/i.test(pdfText)) {
             hasLTV = true;
         }
 
-        // 3. Cek di compressed streams
         if (!hasLTV) {
             const streamRegex = /(\d+\s+0\s+obj\s*<<[^>]*>>)\s*stream\s*\n([\s\S]*?)\s*endstream/g;
             let match;
@@ -41,9 +37,7 @@ function checkPdfSignature(pdfBuffer) {
                             hasLTV = true;
                             break;
                         }
-                    } catch (zlibErr) {
-                        // Skip
-                    }
+                    } catch (zlibErr) { }
                 } else {
                     if (/\/Type\s*\/DSS|\/DSS\s+\d+\s+0\s+R/i.test(streamContent)) {
                         hasLTV = true;
@@ -53,11 +47,9 @@ function checkPdfSignature(pdfBuffer) {
             }
         }
 
-        // 4. Cek VRI sebagai fallback
         if (!hasLTV && /\/Type\s*\/VRI/i.test(pdfText)) {
             hasLTV = true;
         }
-
     } catch (e) {
         console.warn('⚠️ LTV detection failed:', e.message);
     }
@@ -85,7 +77,6 @@ function checkPdfSignature(pdfBuffer) {
     }
 
     const rawDate = extract(/\/M\s*\(D:(\d{14})/);
-
     let formattedDate = '';
     if (rawDate && rawDate.length >= 14) {
         const year = rawDate.substring(0, 4);
@@ -97,7 +88,7 @@ function checkPdfSignature(pdfBuffer) {
         formattedDate = `${day}/${month}/${year} ${hour}:${minute}:${second}`;
     }
 
-    const result = {
+    return {
         hasSig: true,
         hasLTV: hasLTV,
         signer: signer,
@@ -105,25 +96,17 @@ function checkPdfSignature(pdfBuffer) {
         location: extract(/\/Location\s*\(([^)]*(?:\\\)[^)]*)*)\)/),
         date: formattedDate,
     };
-
-    return result;
 }
 
-exports.handler = async (event, context) => {
-    // CORS headers
+exports.handler = async (event) => {
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
         'Access-Control-Allow-Methods': 'POST, OPTIONS'
     };
 
-    // Handle OPTIONS request
     if (event.httpMethod === 'OPTIONS') {
-        return {
-            statusCode: 200,
-            headers,
-            body: ''
-        };
+        return { statusCode: 200, headers, body: '' };
     }
 
     if (event.httpMethod !== 'POST') {
@@ -137,7 +120,6 @@ exports.handler = async (event, context) => {
     try {
         const contentType = event.headers['content-type'] || event.headers['Content-Type'];
         const boundary = contentType.split('boundary=')[1];
-
         const bodyBuffer = Buffer.from(event.body, event.isBase64Encoded ? 'base64' : 'utf8');
         const parts = multipart.parse(bodyBuffer, boundary);
 
@@ -151,7 +133,6 @@ exports.handler = async (event, context) => {
         }
 
         const result = checkPdfSignature(pdfPart.data);
-
         return {
             statusCode: 200,
             headers,

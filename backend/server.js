@@ -218,6 +218,94 @@ app.post('/api/parse-certificate', upload.single('certificate'), (req, res) => {
     }
 });
 
+// === Helper: Embed Visual Signature ===
+async function embedVisualSignature(pdfDoc, overlay) {
+    try {
+        const page = pdfDoc.getPages()[overlay.page - 1];
+        if (!page) {
+            console.warn('⚠️ Page not found:', overlay.page);
+            return;
+        }
+
+        let imageBytes;
+        let imageType = 'png'; // default
+
+        // ✅ Deteksi format image dari data URL
+        if (overlay.content.startsWith('data:image/png')) {
+            const base64 = overlay.content.split(',')[1];
+            imageBytes = Buffer.from(base64, 'base64');
+            imageType = 'png';
+        } else if (overlay.content.startsWith('data:image/jpeg') || overlay.content.startsWith('data:image/jpg')) {
+            const base64 = overlay.content.split(',')[1];
+            imageBytes = Buffer.from(base64, 'base64');
+            imageType = 'jpeg';
+        } else {
+            console.warn('⚠️ Unsupported image format:', overlay.content.substring(0, 50));
+            return;
+        }
+
+        // ✅ Embed sesuai tipe
+        let image;
+        try {
+            if (imageType === 'png') {
+                image = await pdfDoc.embedPng(imageBytes);
+            } else if (imageType === 'jpeg') {
+                image = await pdfDoc.embedJpg(imageBytes);
+            }
+        } catch (embedErr) {
+            console.error('❌ Image embed error:', embedErr.message);
+            // ✅ Fallback: coba konversi JPEG ke PNG jika gagal
+            if (imageType === 'jpeg') {
+                console.log('🔄 Retrying with PNG conversion...');
+                try {
+                    const { createCanvas, loadImage } = require('canvas');
+                    const img = await loadImage(imageBytes);
+                    const canvas = createCanvas(img.width, img.height);
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const pngBuffer = canvas.toBuffer('image/png');
+                    image = await pdfDoc.embedPng(pngBuffer);
+                } catch (fallbackErr) {
+                    console.error('❌ Fallback conversion failed:', fallbackErr.message);
+                    throw fallbackErr;
+                }
+            } else {
+                throw embedErr;
+            }
+        }
+
+        const pageWidth = page.getWidth();
+        const pageHeight = page.getHeight();
+        const scale = 1.3;
+
+        // Konversi koordinat
+        const xPdf = overlay.x / scale;
+        const yPdf = pageHeight - (overlay.y / scale) - (overlay.height / scale);
+
+        console.log('📍 Embedding signature:', {
+            type: imageType,
+            page: overlay.page,
+            x: xPdf.toFixed(2),
+            y: yPdf.toFixed(2),
+            width: (overlay.width / scale).toFixed(2),
+            height: (overlay.height / scale).toFixed(2)
+        });
+
+        page.drawImage(image, {
+            x: xPdf,
+            y: yPdf,
+            width: overlay.width / scale,
+            height: overlay.height / scale,
+        });
+
+        console.log('✅ Visual signature embedded successfully');
+    } catch (err) {
+        console.error('❌ Failed to embed visual signature:', err.message);
+        console.error('Stack:', err.stack);
+        throw err;
+    }
+}
+
 // === SIGNING ENDPOINT (Flattened + Cryptographic) ===
 app.post('/api/sign-pdf', upload.fields([
     { name: 'pdf', maxCount: 1 },
@@ -237,28 +325,35 @@ app.post('/api/sign-pdf', upload.fields([
         const password = req.body.password || '';
         const reason = req.body.reason || 'Document approval';
         const location = req.body.location || 'Digital Signature';
-        const contactInfo = req.body.contactInfo || '';
-        const signerName = req.body.signerName || '';
 
         const p12Buffer = fs.readFileSync(p12File.path);
         let originalPdfBuffer = fs.readFileSync(pdfFile.path);
 
-        // ✅ FLATTEN PDF: Hapus form fields & annotations aktif
+        // ✅ Load PDF untuk flatten dan embed signature
         let flattenedPdfBuffer;
         try {
             const pdfDoc = await PDFDocument.load(originalPdfBuffer, {
                 ignoreEncryption: true,
                 allowInvalidSignatures: true,
             });
+
+            // ✅ Embed visual signature jika ada
+            if (req.body.signatureOverlay) {
+                const overlay = JSON.parse(req.body.signatureOverlay);
+                console.log('📝 Embedding visual signature:', overlay);
+                await embedVisualSignature(pdfDoc, overlay);
+            }
+
+            // ✅ Save PDF (flatten otomatis)
             const uint8Array = await pdfDoc.save({
                 useObjectStreams: false,
                 addDefaultPage: false,
             });
-            // 🔁 Konversi Uint8Array ke Buffer
             flattenedPdfBuffer = Buffer.from(uint8Array);
+            console.log('✅ PDF flattened successfully');
         } catch (err) {
-            console.warn('⚠️ PDF flattening failed. Using original PDF as fallback.');
-            flattenedPdfBuffer = originalPdfBuffer; // ini sudah Buffer
+            console.warn('⚠️ PDF processing failed:', err.message);
+            flattenedPdfBuffer = originalPdfBuffer;
         }
 
         // ✅ Validasi sertifikat
@@ -272,7 +367,7 @@ app.post('/api/sign-pdf', upload.fields([
             pdfBuffer: flattenedPdfBuffer,
             reason: reason,
             location: location,
-            signatureLength: 16384, // Lebih aman untuk sertifikat dengan chain
+            signatureLength: 16384,
         });
 
         // ✅ Tanda tangan kriptografi

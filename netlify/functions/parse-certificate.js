@@ -1,4 +1,3 @@
-// netlify/functions/parse-certificate.js
 const multipart = require('parse-multipart-data');
 const forge = require('node-forge');
 
@@ -35,7 +34,7 @@ function parseP12Certificate(p12Buffer, password = '') {
     }
 }
 
-exports.handler = async (event, context) => {
+exports.handler = async (event) => {
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
@@ -57,7 +56,6 @@ exports.handler = async (event, context) => {
     try {
         const contentType = event.headers['content-type'] || event.headers['Content-Type'];
         const boundary = contentType.split('boundary=')[1];
-
         const bodyBuffer = Buffer.from(event.body, event.isBase64Encoded ? 'base64' : 'utf8');
         const parts = multipart.parse(bodyBuffer, boundary);
 
