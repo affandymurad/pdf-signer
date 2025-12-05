@@ -7,7 +7,10 @@ const zlib = require('zlib');
 const forge = require('node-forge');
 const signer = require('node-signpdf').default;
 const { plainAddPlaceholder } = require('node-signpdf');
-const { PDFDocument } = require('pdf-lib'); // ✅ Untuk flattening
+const { PDFDocument } = require('pdf-lib');
+
+// ✅ Import LTV helper
+const { extractCertChain, requestOCSP, embedDSS } = require('./ltv-helper');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -71,7 +74,7 @@ function parseP12Certificate(p12Buffer, password = '') {
     }
 }
 
-// === Helper: Check Signature with Accurate LTV Detection & User-Friendly Output ===
+// === Helper: Check Signature ===
 function checkPdfSignature(pdfBuffer) {
     const pdfText = pdfBuffer.toString('binary');
     const hasSig = /\/Type\s*\/Sig|\/FT\s*\/Sig|\/SubFilter\s*\/adbe\.pkcs7/i.test(pdfText);
@@ -80,17 +83,14 @@ function checkPdfSignature(pdfBuffer) {
     let hasLTV = false;
 
     try {
-        // 1. Cek /DSS di root level
         if (/\/DSS\s+\d+\s+0\s+R/i.test(pdfText)) {
             hasLTV = true;
         }
 
-        // 2. Cek /Type /DSS di object definition
         if (!hasLTV && /\/Type\s*\/DSS/i.test(pdfText)) {
             hasLTV = true;
         }
 
-        // 3. Cek di compressed streams
         if (!hasLTV) {
             const streamRegex = /(\d+\s+0\s+obj\s*<<[^>]*>>)\s*stream\s*\n([\s\S]*?)\s*endstream/g;
             let match;
@@ -123,7 +123,6 @@ function checkPdfSignature(pdfBuffer) {
             }
         }
 
-        // 4. Cek VRI sebagai fallback
         if (!hasLTV && /\/Type\s*\/VRI/i.test(pdfText)) {
             hasLTV = true;
         }
@@ -149,16 +148,13 @@ function checkPdfSignature(pdfBuffer) {
         return match ? decodePdfString(match[1]) : '';
     };
 
-    // ✅ Ambil signer name: prioritaskan /Name, fallback ke /T (misal "Signature1")
     let signer = extract(/\/Name\s*\(([^)]*(?:\\\)[^)]*)*)\)/);
     if (!signer || signer.trim() === '') {
         signer = extract(/\/T\s*\(([^)]*(?:\\\)[^)]*)*)\)/) || 'Signature1';
     }
 
-    // ✅ Ambil tanggal mentah dari PDF
-    const rawDate = extract(/\/M\s*\(D:(\d{14})/); // contoh: 20250925090927
+    const rawDate = extract(/\/M\s*\(D:(\d{14})/);
 
-    // ✅ Konversi ke format "25/09/2025 09:09:27"
     let formattedDate = '';
     if (rawDate && rawDate.length >= 14) {
         const year = rawDate.substring(0, 4);
@@ -173,18 +169,101 @@ function checkPdfSignature(pdfBuffer) {
     const result = {
         hasSig: true,
         hasLTV: hasLTV,
-        signer: signer, // ✅ Akan jadi "Signature1" jika tidak ada /Name
+        signer: signer,
         reason: extract(/\/Reason\s*\(([^)]*(?:\\\)[^)]*)*)\)/),
         location: extract(/\/Location\s*\(([^)]*(?:\\\)[^)]*)*)\)/),
-        date: formattedDate, // ✅ Format tanggal sesuai permintaan
+        date: formattedDate,
     };
 
     return result;
 }
 
+// === Helper: Embed Visual Signature ===
+async function embedVisualSignature(pdfDoc, overlay) {
+    try {
+        const page = pdfDoc.getPages()[overlay.page - 1];
+        if (!page) {
+            console.warn('⚠️ Page not found:', overlay.page);
+            return;
+        }
+
+        let imageBytes;
+        let imageType = 'png';
+
+        if (overlay.content.startsWith('data:image/png')) {
+            const base64 = overlay.content.split(',')[1];
+            imageBytes = Buffer.from(base64, 'base64');
+            imageType = 'png';
+        } else if (overlay.content.startsWith('data:image/jpeg') || overlay.content.startsWith('data:image/jpg')) {
+            const base64 = overlay.content.split(',')[1];
+            imageBytes = Buffer.from(base64, 'base64');
+            imageType = 'jpeg';
+        } else {
+            console.warn('⚠️ Unsupported image format:', overlay.content.substring(0, 50));
+            return;
+        }
+
+        let image;
+        try {
+            if (imageType === 'png') {
+                image = await pdfDoc.embedPng(imageBytes);
+            } else if (imageType === 'jpeg') {
+                image = await pdfDoc.embedJpg(imageBytes);
+            }
+        } catch (embedErr) {
+            console.error('❌ Image embed error:', embedErr.message);
+            if (imageType === 'jpeg') {
+                console.log('🔄 Retrying with PNG conversion...');
+                try {
+                    const { createCanvas, loadImage } = require('canvas');
+                    const img = await loadImage(imageBytes);
+                    const canvas = createCanvas(img.width, img.height);
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const pngBuffer = canvas.toBuffer('image/png');
+                    image = await pdfDoc.embedPng(pngBuffer);
+                } catch (fallbackErr) {
+                    console.error('❌ Fallback conversion failed:', fallbackErr.message);
+                    throw fallbackErr;
+                }
+            } else {
+                throw embedErr;
+            }
+        }
+
+        const pageWidth = page.getWidth();
+        const pageHeight = page.getHeight();
+        const scale = 1.3;
+
+        const xPdf = overlay.x / scale;
+        const yPdf = pageHeight - (overlay.y / scale) - (overlay.height / scale);
+
+        console.log('📍 Embedding signature:', {
+            type: imageType,
+            page: overlay.page,
+            x: xPdf.toFixed(2),
+            y: yPdf.toFixed(2),
+            width: (overlay.width / scale).toFixed(2),
+            height: (overlay.height / scale).toFixed(2)
+        });
+
+        page.drawImage(image, {
+            x: xPdf,
+            y: yPdf,
+            width: overlay.width / scale,
+            height: overlay.height / scale,
+        });
+
+        console.log('✅ Visual signature embedded successfully');
+    } catch (err) {
+        console.error('❌ Failed to embed visual signature:', err.message);
+        throw err;
+    }
+}
+
 // === Routes ===
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'OK', message: 'PDF Signing Service is running' });
+    res.json({ status: 'OK', message: 'PDF Signing Service with AUTO TSA & LTV is running' });
 });
 
 app.post('/api/check-signature', upload.single('pdf'), (req, res) => {
@@ -218,95 +297,7 @@ app.post('/api/parse-certificate', upload.single('certificate'), (req, res) => {
     }
 });
 
-// === Helper: Embed Visual Signature ===
-async function embedVisualSignature(pdfDoc, overlay) {
-    try {
-        const page = pdfDoc.getPages()[overlay.page - 1];
-        if (!page) {
-            console.warn('⚠️ Page not found:', overlay.page);
-            return;
-        }
-
-        let imageBytes;
-        let imageType = 'png'; // default
-
-        // ✅ Deteksi format image dari data URL
-        if (overlay.content.startsWith('data:image/png')) {
-            const base64 = overlay.content.split(',')[1];
-            imageBytes = Buffer.from(base64, 'base64');
-            imageType = 'png';
-        } else if (overlay.content.startsWith('data:image/jpeg') || overlay.content.startsWith('data:image/jpg')) {
-            const base64 = overlay.content.split(',')[1];
-            imageBytes = Buffer.from(base64, 'base64');
-            imageType = 'jpeg';
-        } else {
-            console.warn('⚠️ Unsupported image format:', overlay.content.substring(0, 50));
-            return;
-        }
-
-        // ✅ Embed sesuai tipe
-        let image;
-        try {
-            if (imageType === 'png') {
-                image = await pdfDoc.embedPng(imageBytes);
-            } else if (imageType === 'jpeg') {
-                image = await pdfDoc.embedJpg(imageBytes);
-            }
-        } catch (embedErr) {
-            console.error('❌ Image embed error:', embedErr.message);
-            // ✅ Fallback: coba konversi JPEG ke PNG jika gagal
-            if (imageType === 'jpeg') {
-                console.log('🔄 Retrying with PNG conversion...');
-                try {
-                    const { createCanvas, loadImage } = require('canvas');
-                    const img = await loadImage(imageBytes);
-                    const canvas = createCanvas(img.width, img.height);
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    const pngBuffer = canvas.toBuffer('image/png');
-                    image = await pdfDoc.embedPng(pngBuffer);
-                } catch (fallbackErr) {
-                    console.error('❌ Fallback conversion failed:', fallbackErr.message);
-                    throw fallbackErr;
-                }
-            } else {
-                throw embedErr;
-            }
-        }
-
-        const pageWidth = page.getWidth();
-        const pageHeight = page.getHeight();
-        const scale = 1.3;
-
-        // Konversi koordinat
-        const xPdf = overlay.x / scale;
-        const yPdf = pageHeight - (overlay.y / scale) - (overlay.height / scale);
-
-        console.log('📍 Embedding signature:', {
-            type: imageType,
-            page: overlay.page,
-            x: xPdf.toFixed(2),
-            y: yPdf.toFixed(2),
-            width: (overlay.width / scale).toFixed(2),
-            height: (overlay.height / scale).toFixed(2)
-        });
-
-        page.drawImage(image, {
-            x: xPdf,
-            y: yPdf,
-            width: overlay.width / scale,
-            height: overlay.height / scale,
-        });
-
-        console.log('✅ Visual signature embedded successfully');
-    } catch (err) {
-        console.error('❌ Failed to embed visual signature:', err.message);
-        console.error('Stack:', err.stack);
-        throw err;
-    }
-}
-
-// === SIGNING ENDPOINT (Flattened + Cryptographic) ===
+// === SIGNING ENDPOINT (AUTO TSA & LTV ENABLED) ===
 app.post('/api/sign-pdf', upload.fields([
     { name: 'pdf', maxCount: 1 },
     { name: 'certificate', maxCount: 1 }
@@ -326,10 +317,17 @@ app.post('/api/sign-pdf', upload.fields([
         const reason = req.body.reason || 'Document approval';
         const location = req.body.location || 'Digital Signature';
 
+        // 🔥 AUTOMATICALLY ENABLED - No frontend options needed
+        const enableTSA = true;
+        const enableLTV = true;
+        const tsaUrl = 'http://freetsa.org/tsr';
+
+        console.log('📋 Auto-signing with TSA & LTV enabled');
+
         const p12Buffer = fs.readFileSync(p12File.path);
         let originalPdfBuffer = fs.readFileSync(pdfFile.path);
 
-        // ✅ Load PDF untuk flatten dan embed signature
+        // 1️⃣ Load PDF untuk flatten dan embed signature
         let flattenedPdfBuffer;
         try {
             const pdfDoc = await PDFDocument.load(originalPdfBuffer, {
@@ -337,14 +335,12 @@ app.post('/api/sign-pdf', upload.fields([
                 allowInvalidSignatures: true,
             });
 
-            // ✅ Embed visual signature jika ada
             if (req.body.signatureOverlay) {
                 const overlay = JSON.parse(req.body.signatureOverlay);
-                console.log('📝 Embedding visual signature:', overlay);
+                console.log('📍 Embedding visual signature:', overlay);
                 await embedVisualSignature(pdfDoc, overlay);
             }
 
-            // ✅ Save PDF (flatten otomatis)
             const uint8Array = await pdfDoc.save({
                 useObjectStreams: false,
                 addDefaultPage: false,
@@ -356,27 +352,88 @@ app.post('/api/sign-pdf', upload.fields([
             flattenedPdfBuffer = originalPdfBuffer;
         }
 
-        // ✅ Validasi sertifikat
+        // 2️⃣ Validasi sertifikat
         const certInfo = parseP12Certificate(p12Buffer, password);
         if (!certInfo.success) {
             throw new Error('Invalid certificate or password: ' + certInfo.error);
         }
 
-        // ✅ Tambahkan placeholder signature
+        // 3️⃣ Tambahkan placeholder signature dengan ukuran lebih besar untuk TSA
         const pdfWithPlaceholder = plainAddPlaceholder({
             pdfBuffer: flattenedPdfBuffer,
             reason: reason,
             location: location,
-            signatureLength: 16384,
+            signatureLength: 32768, // Lebih besar untuk TSA + LTV
         });
 
-        // ✅ Tanda tangan kriptografi
-        const signedPdf = signer.sign(pdfWithPlaceholder, p12Buffer, {
+        // 4️⃣ Tanda tangan kriptografi
+        let signedPdf = signer.sign(pdfWithPlaceholder, p12Buffer, {
             passphrase: password,
             asn1Strict: false
         });
 
-        // ✅ Simpan & kirim
+        // 5️⃣ AUTO: Request TSA timestamp
+        console.log('⏱️ Requesting TSA timestamp (auto-enabled)...');
+        try {
+            const { addTimestampToPDF } = require('./tsa-helper');
+            const newSignedPdf = await addTimestampToPDF(signedPdf, tsaUrl);
+            if (newSignedPdf && newSignedPdf.length > 0) {
+                signedPdf = newSignedPdf;
+                console.log('✅ TSA timestamp embedded successfully');
+            }
+        } catch (tsaErr) {
+            console.warn('⚠️ TSA failed (continuing without timestamp):', tsaErr.message);
+            // Continue tanpa TSA jika gagal
+        }
+
+        // 6️⃣ AUTO: Embed LTV/DSS
+        console.log('🔒 Preparing LTV/DSS (auto-enabled)...');
+        try {
+            const certChain = extractCertChain(certInfo.p12);
+            console.log(`📋 Certificate chain length: ${certChain.length}`);
+
+            if (certChain.length >= 1) {
+                const cert = certChain[0];
+
+                // Check if self-signed
+                const isSelfSigned = cert.subject.getField('CN')?.value === cert.issuer.getField('CN')?.value;
+
+                if (isSelfSigned) {
+                    console.log('ℹ️ Self-signed certificate detected');
+                    // For self-signed certs, just embed the certificate (no OCSP needed)
+                    signedPdf = embedDSS(signedPdf, [], certChain);
+                    console.log('✅ LTV/DSS embedded with certificate (self-signed, no OCSP)');
+                } else if (certChain.length > 1) {
+                    // We have issuer cert, try OCSP
+                    const issuerCert = certChain[1];
+
+                    console.log('📡 Requesting OCSP response...');
+                    const ocspResponse = await requestOCSP(cert, issuerCert);
+                    const ocspResponses = ocspResponse ? [ocspResponse] : [];
+
+                    if (ocspResponse) {
+                        console.log('✅ OCSP response received');
+                    } else {
+                        console.warn('⚠️ OCSP response not available (continuing anyway)');
+                    }
+
+                    signedPdf = embedDSS(signedPdf, ocspResponses, certChain);
+                    console.log('✅ LTV/DSS embedded with certificate chain and OCSP');
+                } else {
+                    // Single cert, not self-signed (missing issuer)
+                    console.warn('⚠️ No issuer certificate found - embedding cert only');
+                    signedPdf = embedDSS(signedPdf, [], certChain);
+                    console.log('✅ LTV/DSS embedded with certificate only');
+                }
+            } else {
+                console.warn('⚠️ LTV skipped: No certificates found in chain');
+            }
+        } catch (ltvErr) {
+            console.warn('⚠️ LTV failed (continuing without LTV):', ltvErr.message);
+            // Continue tanpa LTV jika gagal
+        }
+
+        // 7️⃣ Simpan & kirim
         const outName = pdfFile.originalname.replace(/\.pdf$/i, '_signed.pdf');
         outPath = path.join(uploadsDir, `signed-${Date.now()}.pdf`);
         fs.writeFileSync(outPath, signedPdf);
@@ -405,5 +462,8 @@ app.post('/api/sign-pdf', upload.fields([
 app.listen(PORT, () => {
     console.log('🚀 PDF Signing Server running on http://localhost:' + PORT);
     console.log('✅ Adobe-compatible cryptographic signing enabled');
+    console.log('✅ TSA (Time Stamping Authority) AUTO-ENABLED');
+    console.log('✅ LTV (Long-Term Validation) AUTO-ENABLED');
     console.log('ℹ️  PDFs are flattened before signing to avoid error (14)');
+    console.log('🔥 TSA & LTV are now automatically applied to all signatures');
 });

@@ -968,7 +968,7 @@ function App() {
 
             {/* ✅ Signature Mode Selector */}
             <div className="input-group">
-              <label>Metode Tanda Tangan:</label>
+              <label>Signature Method:</label>
               <div className="radio-group">
                 <label>
                   <input
@@ -999,7 +999,8 @@ function App() {
             {signatureMode === 'visual' && (
               <div className="visual-signature-panel">
                 <h4>✍️ Choose Signature Method:</h4>
-                <p className="instruction-text">Drag preview to PDF to add signature</p>
+                <p className="instruction-text">Drag preview to PDF to add signature <br />For the best experience, it is recommended to use a large-screen device in landscape mode.
+                  If signing via smartphone or tablet, after generating your signature, simply tap once—the marker will appear in the PDF preview box for you to customize.</p>
                 {/* Radio Button Selector */}
                 <div className="signature-type-selector">
                   <label>
@@ -1311,40 +1312,397 @@ function App() {
             )}
 
             {/* Accordion */}
+            {/* Accordion */}
             <div className="accordion">
+              {/* Warning Box - Displayed above accordion */}
+              <div className="certificate-warning-box" style={{
+                backgroundColor: '#fff3cd',
+                border: '1px solid #ffc107',
+                borderRadius: '8px',
+                padding: '15px',
+                marginBottom: '15px',
+                fontSize: '0.95em'
+              }}>
+                <h4 style={{ color: '#856404', margin: '0 0 10px 0', fontSize: '1em' }}>
+                  ⚠️ About Self-Signed Certificates
+                </h4>
+                <p style={{ margin: '5px 0', color: '#856404' }}>
+                  <strong>Certificates created with OpenSSL (self-signed) will NOT be trusted by Adobe Reader.</strong>
+                </p>
+                <p style={{ margin: '5px 0', color: '#856404' }}>
+                  Signed PDFs will display the message: <em>"At least one signature is invalid"</em>
+                </p>
+                <p style={{ margin: '5px 0', color: '#856404' }}>
+                  <strong>Why?</strong> Self-signed certificates are not issued by a trusted Certificate Authority (CA).
+                </p>
+                <div style={{
+                  marginTop: '12px',
+                  paddingTop: '12px',
+                  borderTop: '1px solid #ffc107'
+                }}>
+                  <p style={{ margin: '5px 0', color: '#856404', fontWeight: 'bold' }}>
+                    ✅ For valid signatures in Adobe Reader:
+                  </p>
+                  <ul style={{ margin: '8px 0', paddingLeft: '20px', color: '#856404' }}>
+                    <li>Use certificates from trusted CAs (paid: DigiCert, GlobalSign, Sectigo)</li>
+                    <li>Or request from your IT/organization for registered internal CA</li>
+                  </ul>
+                  <p style={{ margin: '8px 0 0 0', color: '#856404', fontSize: '0.9em' }}>
+                    <strong>Note:</strong> Self-signed certificates can be used for testing or internal use,
+                    but each user must manually trust the certificate in Adobe Reader.
+                  </p>
+                </div>
+              </div>
+
               <div className="accordion-item">
                 <div className="accordion-header" onClick={() => toggleAccordion(0)}>
-                  <span>💻 Create P12 Certificate (Windows)</span>
+                  <span>💻 Create Self-Signed Certificate (Windows)</span>
                   <span>{activeAccordion === 0 ? '▲' : '▼'}</span>
                 </div>
                 {activeAccordion === 0 && (
                   <div className="accordion-content">
+                    <div style={{
+                      backgroundColor: '#f8d7da',
+                      border: '1px solid #f5c2c7',
+                      borderRadius: '6px',
+                      padding: '12px',
+                      marginBottom: '15px',
+                      fontSize: '0.9em'
+                    }}>
+                      <p style={{ margin: '0', color: '#842029' }}>
+                        <strong>⚠️ WARNING:</strong> This certificate is for testing/development only.
+                        Adobe Reader will show "invalid signature" because no CA verifies it.
+                      </p>
+                    </div>
+
+                    <h4 style={{ marginTop: '10px', marginBottom: '10px' }}>Method 1: Simple (No CRL/OCSP)</h4>
                     <ol>
-                      <li>Install <a href="https://slproweb.com/products/Win32OpenSSL.html" target="_blank" rel="noopener noreferrer">OpenSSL for Windows</a></li>
-                      <li>Open Command Prompt</li>
-                      <li>Generate private key:<br /><code>openssl genrsa -out private.key 2048</code></li>
-                      <li>Create certificate request:<br /><code>openssl req -new -key private.key -subj "/CN=Your Name/C=ID" -out request.csr</code></li>
-                      <li>Generate self-signed certificate:<br /><code>openssl x509 -req -days 365 -in request.csr -signkey private.key -out certificate.crt</code></li>
-                      <li>Create P12 bundle:<br /><code>openssl pkcs12 -export -out certificate.p12 -inkey private.key -in certificate.crt</code></li>
+                      <li>
+                        Install <a href="https://slproweb.com/products/Win32OpenSSL.html" target="_blank" rel="noopener noreferrer">OpenSSL for Windows</a>
+                      </li>
+                      <li>Open Command Prompt (Run as Administrator)</li>
+                      <li>
+                        Generate private key:<br />
+                        <code>openssl genrsa -out private.key 2048</code>
+                      </li>
+                      <li>
+                        Create certificate request (replace "Your Name" with your name):<br />
+                        <code>openssl req -new -key private.key -subj "/CN=Your Name/O=Your Organization/C=US" -out request.csr</code>
+                      </li>
+                      <li>
+                        Generate self-signed certificate (valid for 1 year):<br />
+                        <code>openssl x509 -req -days 365 -in request.csr -signkey private.key -out certificate.crt</code>
+                      </li>
+                      <li>
+                        Create P12 bundle (you'll be asked for a password, remember it):<br />
+                        <code>openssl pkcs12 -export -out certificate.p12 -inkey private.key -in certificate.crt -name "My Self-Signed Cert"</code>
+                      </li>
                     </ol>
+
+                    <h4 style={{ marginTop: '20px', marginBottom: '10px' }}>Method 2: Enhanced (With Extensions)</h4>
+                    <p style={{ fontSize: '0.9em', color: '#666', marginBottom: '10px' }}>
+                      This method adds extensions to reduce verification warnings (CRL/OCSP addresses won't work but will be present).
+                    </p>
+                    <ol>
+                      <li>
+                        Create a config file <code>cert.conf</code> with this content:<br />
+                        <textarea readOnly style={{
+                          width: '100%',
+                          height: '180px',
+                          fontFamily: 'monospace',
+                          fontSize: '0.85em',
+                          marginTop: '5px',
+                          padding: '10px',
+                          border: '1px solid #ddd',
+                          borderRadius: '4px'
+                        }} value={`[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+
+[req_distinguished_name]
+
+[v3_ca]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, nonRepudiation
+extendedKeyUsage = emailProtection
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always
+crlDistributionPoints = URI:http://localhost/crl.pem
+authorityInfoAccess = OCSP;URI:http://localhost/ocsp`} />
+                      </li>
+                      <li>
+                        Generate private key:<br />
+                        <code>openssl genrsa -out private.key 2048</code>
+                      </li>
+                      <li>
+                        Create self-signed certificate with extensions:<br />
+                        <code>openssl req -new -x509 -key private.key -out certificate.crt -days 365 -subj "/CN=Your Name/O=Your Organization/C=US" -config cert.conf</code>
+                      </li>
+                      <li>
+                        Create P12 bundle:<br />
+                        <code>openssl pkcs12 -export -out certificate.p12 -inkey private.key -in certificate.crt -name "Enhanced Self-Signed"</code>
+                      </li>
+                    </ol>
+
+                    <div style={{
+                      marginTop: '15px',
+                      padding: '10px',
+                      backgroundColor: '#fff3cd',
+                      borderRadius: '6px',
+                      fontSize: '0.9em'
+                    }}>
+                      <p style={{ margin: '5px 0', color: '#856404' }}>
+                        <strong>📝 Note about CRL/OCSP warnings:</strong>
+                      </p>
+                      <p style={{ margin: '5px 0', color: '#856404' }}>
+                        Self-signed certificates will always show CRL/OCSP warnings on verification sites like verifysignature.eu because:
+                      </p>
+                      <ul style={{ margin: '5px 0', paddingLeft: '20px', color: '#856404' }}>
+                        <li>No actual CRL (Certificate Revocation List) server exists</li>
+                        <li>No actual OCSP (Online Certificate Status Protocol) responder exists</li>
+                        <li>These services require a real Certificate Authority infrastructure</li>
+                      </ul>
+                      <p style={{ margin: '5px 0', color: '#856404' }}>
+                        <strong>This is expected behavior for self-signed certificates.</strong> Our TSA and LTV features still work for timestamp validation.
+                      </p>
+                    </div>
+
+                    <div style={{
+                      marginTop: '15px',
+                      padding: '10px',
+                      backgroundColor: '#e7f3ff',
+                      borderLeft: '3px solid #0066cc',
+                      fontSize: '0.9em'
+                    }}>
+                      <p style={{ margin: '5px 0' }}>
+                        <strong>💡 Manual Trust Tips (to make signature valid on your computer):</strong>
+                      </p>
+                      <ol style={{ margin: '5px 0', paddingLeft: '20px' }}>
+                        <li>Open the signed PDF in Adobe Reader</li>
+                        <li>Click signature → "Signature Properties"</li>
+                        <li>Click "Show Signer's Certificate"</li>
+                        <li>Click "Trust" tab → Check "Use this certificate as a trusted root"</li>
+                        <li>Apply → Signature will become valid on your computer</li>
+                      </ol>
+                      <p style={{ margin: '5px 0', fontSize: '0.85em', color: '#666' }}>
+                        ⚠️ This must be done on every computer that opens the PDF
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
 
               <div className="accordion-item">
                 <div className="accordion-header" onClick={() => toggleAccordion(1)}>
-                  <span>🍎 Create P12 Certificate (Mac/Linux)</span>
+                  <span>🍎 Create Self-Signed Certificate (Mac/Linux)</span>
                   <span>{activeAccordion === 1 ? '▲' : '▼'}</span>
                 </div>
                 {activeAccordion === 1 && (
                   <div className="accordion-content">
+                    <div style={{
+                      backgroundColor: '#f8d7da',
+                      border: '1px solid #f5c2c7',
+                      borderRadius: '6px',
+                      padding: '12px',
+                      marginBottom: '15px',
+                      fontSize: '0.9em'
+                    }}>
+                      <p style={{ margin: '0', color: '#842029' }}>
+                        <strong>⚠️ WARNING:</strong> This certificate is for testing/development only.
+                        Adobe Reader will show "invalid signature" because no CA verifies it.
+                      </p>
+                    </div>
+
+                    <h4 style={{ marginTop: '10px', marginBottom: '10px' }}>Method 1: Simple (No CRL/OCSP)</h4>
                     <ol>
                       <li>Open Terminal</li>
-                      <li><code>openssl genrsa -out private.key 2048</code></li>
-                      <li><code>openssl req -new -key private.key -subj "/CN=Your Name/C=ID" -out request.csr</code></li>
-                      <li><code>openssl x509 -req -days 365 -in request.csr -signkey private.key -out certificate.crt</code></li>
-                      <li><code>openssl pkcs12 -export -out certificate.p12 -inkey private.key -in certificate.crt</code></li>
+                      <li>
+                        Generate private key:<br />
+                        <code>openssl genrsa -out private.key 2048</code>
+                      </li>
+                      <li>
+                        Create certificate request (replace "Your Name" with your name):<br />
+                        <code>openssl req -new -key private.key -subj "/CN=Your Name/O=Your Organization/C=US" -out request.csr</code>
+                      </li>
+                      <li>
+                        Generate self-signed certificate (valid for 1 year):<br />
+                        <code>openssl x509 -req -days 365 -in request.csr -signkey private.key -out certificate.crt</code>
+                      </li>
+                      <li>
+                        Create P12 bundle (you'll be asked for a password, remember it):<br />
+                        <code>openssl pkcs12 -export -out certificate.p12 -inkey private.key -in certificate.crt -name "My Self-Signed Cert"</code>
+                      </li>
                     </ol>
+
+                    <h4 style={{ marginTop: '20px', marginBottom: '10px' }}>Method 2: Enhanced (With Extensions)</h4>
+                    <p style={{ fontSize: '0.9em', color: '#666', marginBottom: '10px' }}>
+                      This method adds extensions to reduce verification warnings (CRL/OCSP addresses won't work but will be present).
+                    </p>
+                    <ol>
+                      <li>
+                        Create a config file <code>cert.conf</code>:<br />
+                        <code style={{ fontSize: '0.85em' }}>cat &gt; cert.conf &lt;&lt;EOF<br />
+                          [req]<br />
+                          distinguished_name = req_distinguished_name<br />
+                          x509_extensions = v3_ca<br />
+                          <br />
+                          [req_distinguished_name]<br />
+                          <br />
+                          [v3_ca]<br />
+                          basicConstraints = CA:FALSE<br />
+                          keyUsage = digitalSignature, nonRepudiation<br />
+                          extendedKeyUsage = emailProtection<br />
+                          subjectKeyIdentifier = hash<br />
+                          authorityKeyIdentifier = keyid:always<br />
+                          crlDistributionPoints = URI:http://localhost/crl.pem<br />
+                          authorityInfoAccess = OCSP;URI:http://localhost/ocsp<br />
+                          EOF</code>
+                      </li>
+                      <li>
+                        Generate private key:<br />
+                        <code>openssl genrsa -out private.key 2048</code>
+                      </li>
+                      <li>
+                        Create self-signed certificate with extensions:<br />
+                        <code>openssl req -new -x509 -key private.key -out certificate.crt -days 365 -subj "/CN=Your Name/O=Your Organization/C=US" -config cert.conf</code>
+                      </li>
+                      <li>
+                        Create P12 bundle:<br />
+                        <code>openssl pkcs12 -export -out certificate.p12 -inkey private.key -in certificate.crt -name "Enhanced Self-Signed"</code>
+                      </li>
+                    </ol>
+
+                    <div style={{
+                      marginTop: '15px',
+                      padding: '10px',
+                      backgroundColor: '#fff3cd',
+                      borderRadius: '6px',
+                      fontSize: '0.9em'
+                    }}>
+                      <p style={{ margin: '5px 0', color: '#856404' }}>
+                        <strong>📝 Note about CRL/OCSP warnings:</strong>
+                      </p>
+                      <p style={{ margin: '5px 0', color: '#856404' }}>
+                        Self-signed certificates will always show CRL/OCSP warnings on verification sites like verifysignature.eu because:
+                      </p>
+                      <ul style={{ margin: '5px 0', paddingLeft: '20px', color: '#856404' }}>
+                        <li>No actual CRL (Certificate Revocation List) server exists</li>
+                        <li>No actual OCSP (Online Certificate Status Protocol) responder exists</li>
+                        <li>These services require a real Certificate Authority infrastructure</li>
+                      </ul>
+                      <p style={{ margin: '5px 0', color: '#856404' }}>
+                        <strong>This is expected behavior for self-signed certificates.</strong> Our TSA and LTV features still work for timestamp validation.
+                      </p>
+                    </div>
+
+                    <div style={{
+                      marginTop: '15px',
+                      padding: '10px',
+                      backgroundColor: '#e7f3ff',
+                      borderLeft: '3px solid #0066cc',
+                      fontSize: '0.9em'
+                    }}>
+                      <p style={{ margin: '5px 0' }}>
+                        <strong>💡 Manual Trust Tips (to make signature valid on your computer):</strong>
+                      </p>
+                      <ol style={{ margin: '5px 0', paddingLeft: '20px' }}>
+                        <li>Open the signed PDF in Adobe Reader</li>
+                        <li>Click signature → "Signature Properties"</li>
+                        <li>Click "Show Signer's Certificate"</li>
+                        <li>Click "Trust" tab → Check "Use this certificate as a trusted root"</li>
+                        <li>Apply → Signature will become valid on your computer</li>
+                      </ol>
+                      <p style={{ margin: '5px 0', fontSize: '0.85em', color: '#666' }}>
+                        ⚠️ This must be done on every computer that opens the PDF
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Additional: Info for Production Use */}
+              <div className="accordion-item">
+                <div className="accordion-header" onClick={() => toggleAccordion(2)}>
+                  <span>🏢 For Production/Professional Use</span>
+                  <span>{activeAccordion === 2 ? '▲' : '▼'}</span>
+                </div>
+                {activeAccordion === 2 && (
+                  <div className="accordion-content">
+                    <div style={{
+                      backgroundColor: '#d1e7dd',
+                      border: '1px solid #badbcc',
+                      borderRadius: '6px',
+                      padding: '12px',
+                      marginBottom: '15px'
+                    }}>
+                      <p style={{ margin: '0', color: '#0f5132', fontWeight: 'bold' }}>
+                        ✅ For signatures that are immediately valid on all computers
+                      </p>
+                    </div>
+
+                    <h4 style={{ marginTop: '15px', color: '#333' }}>Option 1: Commercial Certificate Authority</h4>
+                    <p>Use certificates from globally trusted CAs:</p>
+                    <ul>
+                      <li>
+                        <strong>DigiCert</strong> - <a href="https://www.digicert.com/signing/document-signing-certificates" target="_blank" rel="noopener noreferrer">Document Signing Certificate</a>
+                        <br /><small>Starting ~$200/year, trusted worldwide</small>
+                      </li>
+                      <li>
+                        <strong>GlobalSign</strong> - <a href="https://www.globalsign.com/en/digital-signatures" target="_blank" rel="noopener noreferrer">Digital Signatures</a>
+                        <br /><small>Starting ~$200/year, international coverage</small>
+                      </li>
+                      <li>
+                        <strong>Sectigo (Comodo)</strong> - <a href="https://sectigo.com/ssl-certificates-tls/code-signing" target="_blank" rel="noopener noreferrer">Document Signing</a>
+                        <br /><small>Starting ~$150/year, widely accepted</small>
+                      </li>
+                    </ul>
+
+                    <h4 style={{ marginTop: '20px', color: '#333' }}>Option 2: Organization Certificate Authority</h4>
+                    <p>If your organization/company has an IT department:</p>
+                    <ul>
+                      <li>Request a certificate from your internal company CA</li>
+                      <li>CA must be registered in Adobe Approved Trust List (AATL)</li>
+                      <li>Usually free for employees, valid throughout the organization</li>
+                    </ul>
+
+                    <h4 style={{ marginTop: '20px', color: '#333' }}>Option 3: Government-Issued Digital Certificate</h4>
+                    <p>For United States:</p>
+                    <ul>
+                      <li>
+                        <strong>IdenTrust</strong> - Federal PKI Bridge
+                        <br /><small>Government-approved digital certificates</small>
+                      </li>
+                      <li>
+                        <strong>Entrust</strong> - Federal PKI
+                        <br /><small>Approved for federal and state government use</small>
+                      </li>
+                    </ul>
+                    <p style={{ marginTop: '10px' }}>For other countries:</p>
+                    <ul>
+                      <li><strong>EU:</strong> eIDAS compliant providers (European Digital Identity)</li>
+                      <li><strong>India:</strong> eMudhra, Capricorn CA</li>
+                      <li><strong>Indonesia:</strong> BSrE (Kominfo), Mekari Sign, Privy, VIDA</li>
+                      <li><strong>Singapore:</strong> Netrust, DSTA</li>
+                    </ul>
+
+                    <div style={{
+                      marginTop: '20px',
+                      padding: '12px',
+                      backgroundColor: '#fff3cd',
+                      border: '1px solid #ffc107',
+                      borderRadius: '6px',
+                      fontSize: '0.9em'
+                    }}>
+                      <p style={{ margin: '0', color: '#856404' }}>
+                        <strong>💡 Recommendations:</strong>
+                      </p>
+                      <ul style={{ margin: '5px 0', paddingLeft: '20px', color: '#856404' }}>
+                        <li><strong>Testing/Development:</strong> Use self-signed certificate</li>
+                        <li><strong>Internal Organization:</strong> Request from IT department</li>
+                        <li><strong>External/Customer-facing:</strong> Use commercial CA (DigiCert, GlobalSign, etc.)</li>
+                        <li><strong>Legal Documents:</strong> Use government-approved providers in your country</li>
+                      </ul>
+                    </div>
                   </div>
                 )}
               </div>
